@@ -1,0 +1,9 @@
+## Exists in Lambda:
+#boto3
+#json
+#datetime
+
+## Custom added:
+requests
+requests_aws4auth
+elasticsearch>=5.0.0,<6.0.0

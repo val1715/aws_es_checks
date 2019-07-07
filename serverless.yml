@@ -1,0 +1,134 @@
+---
+service: kibanachecksandalerts # NOTE: update this with your service name
+
+provider:
+  name: aws
+  runtime: python3.7
+  stage: ${opt:stage, 'dev'}
+  region: eu-west-1
+  deploymentBucket:
+    name: carbyne-serverless-framework-files
+
+custom:
+  dev:
+    elastic_url: 'https://search-es-monitoring-development.eu-west-1.es.amazonaws.com'
+    table_name: 'MonitoringService_clients_dev'
+    slack_url: 'https://hooks.slack.com/services/T/B/bkK'
+    log_level: 'INFO'
+
+  qa:
+    elastic_url: "https://search-es-monitoring-qa.eu-west-1.es.amazonaws.com"
+    table_name: "MonitoringService_clients_qa"
+    slack_url: 'https://hooks.slack.com/services/T/B/bkK'
+    log_level: 'INFO'
+
+  stage:
+    elastic_url: "https://search-es-monitoring-stage.eu-west-1.es.amazonaws.com"
+    table_name: "MonitoringService_clients_stage"
+    slack_url: 'https://hooks.slack.com/services/T/B/bkK'
+    log_level: 'INFO'
+
+  prod:
+    elastic_url: ''
+    table_name: "MonitoringService_clients_prod"
+    slack_url: 'https://hooks.slack.com/services/T/B/bkK'
+    log_level: 'WARNING'
+
+  shared: 
+    es_index_prefix: 'clientchecks'
+
+  pythonRequirements:
+    slim: true
+    layer:
+      name: kibanaservice_check_${self:provider.stage}
+      description: Libs for Elasticsearch checks from Lambda AWS
+      compatibleRuntimes: # optional, a list of runtimes this layer is compatible with
+        - python3.7
+      licenseInfo: GPLv3 # optional, a string specifying license information
+      allowedAccounts: # optional, a list of AWS account IDs allowed to access this layer.
+        - 333333333333
+
+package:
+  individually: true
+
+functions:
+  MainFunc:
+    handler: functions/main-func.lambda_handler
+    name: KibanaService-Checks-main-${self:provider.stage}
+    environment:
+      ES_domain_url: ${self:custom.${self:provider.stage}.elastic_url}
+      DDB_table_name: ${self:custom.${self:provider.stage}.table_name}
+      support_func_name: KibanaService-Checks-support-${self:provider.stage}
+      current_environment: ${self:provider.stage}
+      slack_notification_url: ${self:custom.${self:provider.stage}.slack_url}
+      func_log_level: ${self:custom.${self:provider.stage}.log_level}
+      es_check_index_prefix: ${self:custom.shared.es_index_prefix}
+
+    events: 
+      - schedule:
+          name: KibanaService-Checks-main-${self:provider.stage}
+          description: "Scheduler to run kibana checks from elasticsearch"
+          rate: cron(*/1 * * * ? *)
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    package:
+      exclude:
+        - "**/**"
+      include:
+        - functions/main-func.py
+
+  SupportFunc:
+    handler: functions/support-func.lambda_handler
+    name: KibanaService-Checks-support-${self:provider.stage}
+    environment:
+      ES_domain_url: ${self:custom.${self:provider.stage}.elastic_url}
+      DDB_table_name: ${self:custom.${self:provider.stage}.table_name}
+      current_environment: ${self:provider.stage}
+
+    events:
+      - schedule:
+          name: KibanaService-Checks-support-${self:provider.stage}
+          description: "Scheduler to run kibana checks from elasticsearch"
+          rate: cron(0 */4  * * ? *)
+    layers:
+      - {Ref: PythonRequirementsLambdaLayer}
+    package:
+      exclude:
+        - "**/**"
+      include:
+        - functions/support-func.py
+
+resources:
+  Resources:
+    MainFuncLambdaFunction:
+      Type: AWS::Lambda::Function
+      Properties:
+        MemorySize: 128
+        Timeout: 20
+        Role: arn:aws:iam::333333333333:role/lambda_test
+
+    SupportFuncLambdaFunction:
+      Type: AWS::Lambda::Function
+      Properties:
+        MemorySize: 128
+        Timeout: 20
+        Role: arn:aws:iam::333333333333:role/lambda_test
+
+    DynamoTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          -
+            AttributeName: "client_id"
+            AttributeType: "S"
+        KeySchema:
+          -
+            AttributeName: "client_id"
+            KeyType: "HASH"
+        ProvisionedThroughput:
+          ReadCapacityUnits: "1"
+          WriteCapacityUnits: "1"
+        TableName: ${self:custom.${self:provider.stage}.table_name}
+
+plugins:
+  - serverless-python-requirements
